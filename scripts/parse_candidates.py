@@ -14,9 +14,9 @@ from pathlib import Path
 # Parsing
 # ─────────────────────────────────────────────
 
-# Matches lines like: **Candidate 1**, **Candidate [1]**, Candidate 12, etc.
+# Matches lines like: **Candidate 1**, **Candidate [1]**, Candidate 12, ## Candidate 1, Candidate 1:, etc.
 CANDIDATE_HEADER = re.compile(
-    r"^\*{0,2}Candidate\s+\[?(\d+)\]?\*{0,2}\s*$",
+    r"^(?:#{1,3}\s*)?\*{0,2}Candidate\s+\[?(\d+)\]?\*{0,2}\s*:?\s*$",
     re.IGNORECASE
 )
 
@@ -82,8 +82,12 @@ def main():
 
     if not candidates:
         print(
-            "No candidates found. Check that Claude's output uses "
-            "'**Candidate N**' or '**Candidate [N]**' as section headers."
+            "No candidates found in candidates_raw.md.\n"
+            "Accepted header formats:\n"
+            "  **Candidate 1**    **Candidate [1]**\n"
+            "  ## Candidate 1    ### Candidate 1\n"
+            "  Candidate 1:      Candidate 1\n"
+            "Please inspect the file and ensure Claude's output uses one of these formats."
         )
         sys.exit(1)
 
