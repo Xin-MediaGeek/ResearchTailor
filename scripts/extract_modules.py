@@ -7,6 +7,7 @@ Usage:
 """
 
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -23,7 +24,14 @@ except ImportError:
 def load_config() -> dict:
     config_path = Path(__file__).parent.parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    config.setdefault("chunking", {
+        "max_tokens": 12000,
+        "overlap_tokens": 500,
+        "chars_per_token": 2.5,
+        "min_paragraph_tokens": 50,
+    })
+    return config
 
 
 def build_client(config: dict) -> OpenAI:
@@ -59,33 +67,109 @@ def get_header_variants(module: dict, index: int) -> list[str]:
     return variants
 
 
-def split_text_into_chunks(
-    full_text: str,
-    max_chars: int = 50000,
-    overlap_chars: int = 3000
+def estimate_tokens(text: str, chars_per_token: float) -> int:
+    return int(len(text) / chars_per_token)
+
+
+def split_into_paragraphs(text: str, max_tokens: int, chars_per_token: float) -> list[str]:
+    """Split text into paragraph strings using a 4-level boundary hierarchy."""
+    max_chars = int(max_tokens * chars_per_token)
+
+    # Level 1: split on blank lines (handles \n\n, \n \n, \n\t\n)
+    raw_paras = re.split(r'\n[ \t]*\n', text)
+
+    paragraphs = []
+    for para in raw_paras:
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= max_chars:
+            paragraphs.append(para)
+        else:
+            # Level 2/3: split on sentence-ending newlines (。\n or .\n)
+            sub_paras = re.split(r'(?<=[。.])\n', para)
+            for sub in sub_paras:
+                sub = sub.strip()
+                if not sub:
+                    continue
+                if len(sub) <= max_chars:
+                    paragraphs.append(sub)
+                else:
+                    # Level 4: force-split at character limit
+                    while sub:
+                        paragraphs.append(sub[:max_chars])
+                        sub = sub[max_chars:]
+
+    return paragraphs
+
+
+def pack_paragraphs_into_chunks(
+    paragraphs: list[str],
+    max_tokens: int,
+    overlap_tokens: int,
+    chars_per_token: float,
+    min_paragraph_tokens: int,
 ) -> list[str]:
-    if len(full_text) <= max_chars:
-        return [full_text]
+    """Greedily pack paragraphs into token-bounded chunks with overlap."""
+    if not paragraphs:
+        return []
 
-    chunks = []
-    start = 0
-    text_length = len(full_text)
-    while start < text_length:
-        end = min(start + max_chars, text_length)
-        if end < text_length:
-            split_at = full_text.rfind("\n\n", start, end)
-            if split_at > start + max_chars // 2:
-                end = split_at
+    # Merge paragraphs that are below min_paragraph_tokens into the next one
+    merged: list[str] = []
+    buf = ""
+    for p in paragraphs:
+        if buf and estimate_tokens(p, chars_per_token) < min_paragraph_tokens:
+            buf = buf + "\n\n" + p
+        else:
+            if buf:
+                merged.append(buf)
+            buf = p
+    if buf:
+        merged.append(buf)
 
-        chunk = full_text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
+    chunks: list[str] = []
+    current_paras: list[str] = []
+    current_tokens = 0
 
-        if end >= text_length:
-            break
-        start = max(0, end - overlap_chars)
+    for para in merged:
+        para_tok = estimate_tokens(para, chars_per_token)
+        if current_tokens + para_tok > max_tokens and current_paras:
+            chunks.append("\n\n".join(current_paras))
+            # Build overlap from the tail of the closed chunk
+            overlap_paras: list[str] = []
+            overlap_tok = 0
+            for p in reversed(current_paras):
+                t = estimate_tokens(p, chars_per_token)
+                if overlap_tok + t <= overlap_tokens:
+                    overlap_paras.insert(0, p)
+                    overlap_tok += t
+                else:
+                    break
+            current_paras = overlap_paras
+            current_tokens = overlap_tok
+        current_paras.append(para)
+        current_tokens += para_tok
+
+    if current_paras:
+        chunks.append("\n\n".join(current_paras))
 
     return chunks
+
+
+def split_text_into_chunks(full_text: str, chunking_cfg: dict) -> list[str]:
+    """Split full paper text into overlapping token-bounded chunks."""
+    max_tokens = chunking_cfg["max_tokens"]
+    overlap_tokens = chunking_cfg["overlap_tokens"]
+    chars_per_token = chunking_cfg["chars_per_token"]
+    min_paragraph_tokens = chunking_cfg["min_paragraph_tokens"]
+
+    if estimate_tokens(full_text, chars_per_token) <= max_tokens:
+        return [full_text]
+
+    paragraphs = split_into_paragraphs(full_text, max_tokens, chars_per_token)
+    return pack_paragraphs_into_chunks(
+        paragraphs, max_tokens, overlap_tokens, chars_per_token, min_paragraph_tokens
+    )
 
 
 def build_extraction_prompt(
@@ -256,7 +340,7 @@ def main():
                 print(f"  [warn] {paper_id}: empty full text, skipping.")
                 continue
 
-            text_chunks = split_text_into_chunks(full_text)
+            text_chunks = split_text_into_chunks(full_text, config["chunking"])
             chunk_outputs = []
             total_chunks = len(text_chunks)
 
