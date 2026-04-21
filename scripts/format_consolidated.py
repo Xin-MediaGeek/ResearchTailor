@@ -167,6 +167,13 @@ def main():
     module_dir = run_path / "module_extractions"
     output_path = module_dir / "consolidated_extractions.md"
 
+    failed_files = sorted(module_dir.glob("*_extraction_FAILED.md"))
+    if failed_files:
+        print(f"[warn] {len(failed_files)} paper(s) failed extraction and will be excluded:")
+        for ff in failed_files:
+            print(f"  - {ff.stem.replace('_extraction_FAILED', '')}")
+        print()
+
     extraction_files = sorted(module_dir.glob("*_extraction.md"))
     if not extraction_files:
         print("No extraction files found. Run extract_modules.py first.")
