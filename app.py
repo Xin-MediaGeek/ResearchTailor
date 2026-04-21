@@ -13,12 +13,39 @@ from pathlib import Path
 def load_config():
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f) or {}
+    config.setdefault("chunking", {
+        "max_tokens": 12000,
+        "overlap_tokens": 500,
+        "chars_per_token": 2.5,
+        "min_paragraph_tokens": 50,
+    })
+    return config
 
-CONFIG = load_config()
+
+def validate_config(config: dict) -> list[str]:
+    """Return a list of human-readable error messages for missing required fields."""
+    errors = []
+    ds = config.get("deepseek", {})
+    if not ds.get("api_key", "").strip():
+        errors.append("`deepseek.api_key` is missing or empty in config.yaml")
+    if not ds.get("base_url", "").strip():
+        errors.append("`deepseek.base_url` is missing in config.yaml")
+    if not ds.get("model", "").strip():
+        errors.append("`deepseek.model` is missing in config.yaml")
+    return errors
+
+
+try:
+    CONFIG = load_config()
+    _CONFIG_ERROR: str | None = None
+except Exception as e:
+    CONFIG = {}
+    _CONFIG_ERROR = str(e)
+
 ROOT = Path(__file__).parent
-PROJECTS_DIR = ROOT / CONFIG["paths"]["projects_dir"]
-MODULE_POOL_DIR = ROOT / CONFIG["paths"]["module_pool_dir"]
+PROJECTS_DIR = ROOT / CONFIG.get("paths", {}).get("projects_dir", "projects")
+MODULE_POOL_DIR = ROOT / CONFIG.get("paths", {}).get("module_pool_dir", "module_pool")
 
 
 # ─────────────────────────────────────────────
@@ -28,7 +55,7 @@ MODULE_POOL_DIR = ROOT / CONFIG["paths"]["module_pool_dir"]
 def init_dirs():
     PROJECTS_DIR.mkdir(exist_ok=True)
     MODULE_POOL_DIR.mkdir(exist_ok=True)
-    for module in CONFIG["extraction"]["modules"]:
+    for module in CONFIG.get("extraction", {}).get("modules", []):
         (MODULE_POOL_DIR / module["id"]).mkdir(exist_ok=True)
 
 def create_run_folder(label: str) -> Path:
@@ -96,6 +123,14 @@ def open_path_in_file_explorer(path: Path) -> tuple[bool, str]:
 def page_home():
     st.title("LitRecombine")
     st.caption("Literature-Driven Research Direction Generation")
+    if _CONFIG_ERROR:
+        st.error(f"Failed to load config.yaml: {_CONFIG_ERROR}")
+        st.stop()
+    config_errors = validate_config(CONFIG)
+    if config_errors:
+        for msg in config_errors:
+            st.error(f"Configuration error: {msg}")
+        st.stop()
     st.divider()
 
     col1, col2 = st.columns(2)
@@ -150,6 +185,9 @@ def page_home():
 def page_run():
     run_path = Path(st.session_state["active_run"])
     st.title(f"Run: `{run_path.name}`")
+    if _CONFIG_ERROR:
+        st.error(f"Failed to load config.yaml: {_CONFIG_ERROR}")
+        st.stop()
     if st.button("← Back to Home"):
         del st.session_state["active_run"]
         st.rerun()
