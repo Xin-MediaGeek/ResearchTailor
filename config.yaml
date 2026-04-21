@@ -54,3 +54,10 @@ filters:
     - "CAVE"
   excluded_populations:
     - "clinical populations"
+
+# Chunking settings for long-paper processing
+chunking:
+  max_tokens: 12000         # token budget per chunk (estimated)
+  overlap_tokens: 500       # overlap carried from previous chunk (in tokens)
+  chars_per_token: 2.5      # estimation ratio (2.5 for English; 2.0 for CN/EN mixed)
+  min_paragraph_tokens: 50  # paragraphs shorter than this merge with the next
