@@ -45,6 +45,8 @@ class TestSplitIntoParagraphs:
         assert len(result) > 1
         for chunk in result:
             assert estimate_tokens(chunk, 2.5) <= 100
+        # Verify all content is preserved (no characters dropped by force-split)
+        assert "".join(result) == long_para
 
     def test_single_paragraph_under_limit(self):
         text = "short paragraph"
@@ -78,12 +80,11 @@ class TestPackParagraphsIntoChunks:
         assert last_of_chunk1 in result[1]
 
     def test_small_paragraphs_merge(self):
-        # 4 tiny paras (< min_paragraph_tokens=5) should merge together
-        cfg = {**DEFAULT_CFG, "min_paragraph_tokens": 5}
-        paras = ["hi"] * 4
+        # "short" = 5 chars / 2.5 = 2 tokens < min_paragraph_tokens=5, so all should merge
+        paras = ["short"] * 4
         result = pack_paragraphs_into_chunks(
-            paras, max_tokens=cfg["max_tokens"], overlap_tokens=cfg["overlap_tokens"],
-            chars_per_token=cfg["chars_per_token"], min_paragraph_tokens=cfg["min_paragraph_tokens"]
+            paras, max_tokens=1000, overlap_tokens=10,
+            chars_per_token=2.5, min_paragraph_tokens=5
         )
         assert len(result) == 1
 

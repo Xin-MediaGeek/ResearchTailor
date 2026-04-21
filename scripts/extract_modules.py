@@ -86,7 +86,7 @@ def split_into_paragraphs(text: str, max_tokens: int, chars_per_token: float) ->
         if len(para) <= max_chars:
             paragraphs.append(para)
         else:
-            # Level 2/3: split on sentence-ending newlines (。\n or .\n)
+            # Level 2: split on sentence-ending newlines (。\n or .\n)
             sub_paras = re.split(r'(?<=[。.])\n', para)
             for sub in sub_paras:
                 sub = sub.strip()
@@ -116,16 +116,20 @@ def pack_paragraphs_into_chunks(
 
     # Merge paragraphs that are below min_paragraph_tokens into the next one
     merged: list[str] = []
-    buf = ""
+    pending_small: list[str] = []
     for p in paragraphs:
-        if buf and estimate_tokens(p, chars_per_token) < min_paragraph_tokens:
-            buf = buf + "\n\n" + p
+        if estimate_tokens(p, chars_per_token) < min_paragraph_tokens:
+            pending_small.append(p)
         else:
-            if buf:
-                merged.append(buf)
-            buf = p
-    if buf:
-        merged.append(buf)
+            if pending_small:
+                p = "\n\n".join(pending_small) + "\n\n" + p
+                pending_small = []
+            merged.append(p)
+    if pending_small:
+        if merged:
+            merged[-1] = merged[-1] + "\n\n" + "\n\n".join(pending_small)
+        else:
+            merged.append("\n\n".join(pending_small))
 
     chunks: list[str] = []
     current_paras: list[str] = []
@@ -158,6 +162,8 @@ def pack_paragraphs_into_chunks(
 
 def split_text_into_chunks(full_text: str, chunking_cfg: dict) -> list[str]:
     """Split full paper text into overlapping token-bounded chunks."""
+    if not full_text.strip():
+        return []
     max_tokens = chunking_cfg["max_tokens"]
     overlap_tokens = chunking_cfg["overlap_tokens"]
     chars_per_token = chunking_cfg["chars_per_token"]
