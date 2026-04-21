@@ -21,13 +21,16 @@ def extract_pdf_text(pdf_path: Path) -> dict:
             text = page.extract_text() or ""
             pages.append({"page": i + 1, "text": text.strip()})
     full_text = "\n\n".join(p["text"] for p in pages if p["text"])
-    return {
+    result = {
         "paper_id": pdf_path.stem,
         "filename": pdf_path.name,
         "page_count": len(pages),
         "full_text": full_text,
-        "pages": pages
+        "pages": pages,
     }
+    if not full_text.strip():
+        result["error"] = "empty_text"
+    return result
 
 
 def main():
@@ -57,7 +60,10 @@ def main():
             data = extract_pdf_text(pdf_path)
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"  [ok]   {pdf_path.name} -> {out_path.name}")
+            if data.get("error") == "empty_text":
+                print(f"  [warn] {pdf_path.name}: no text extracted (possibly a scanned/image PDF). JSON saved.")
+            else:
+                print(f"  [ok]   {pdf_path.name} -> {out_path.name}")
         except Exception as e:
             errors.append((pdf_path.name, str(e)))
             print(f"  [err]  {pdf_path.name}: {e}")
