@@ -1,0 +1,40 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ─────────────────────────────────────
+.venv/
+venv/
+env/
+.env/
+
+# ── Testing & coverage ───────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Config with secrets ──────────────────────────────────────
+# Copy config.yaml.example → config.yaml and fill in your API key
+config.yaml
+
+# ── Project run output (user data) ──────────────────────────
+projects/
+
+# ── IDE & local tooling ──────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+*.code-workspace
+
+# ── OS generated ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Temp / scratch files ─────────────────────────────────────
+tmp_*.md
+tmp_*.txt
+*.tmp

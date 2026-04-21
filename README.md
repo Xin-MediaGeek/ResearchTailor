@@ -17,7 +17,7 @@
 2. 再基于这些模块做跨论文重组
 3. 最终生成可追溯到原始文献的候选研究方向
 
-这样生成的每个候选方向，都可以追踪到具体来源论文，而不是“无依据地产生一个想法”。
+这样生成的每个候选方向，都可以追踪到具体来源论文，而不是"无依据地产生一个想法"。
 
 ---
 
@@ -48,51 +48,75 @@
 
 ## 安装
 
-在项目根目录执行：
-
 ```bash
 pip install -r requirements.txt
+```
+
+测试套件需要额外安装 pytest：
+
+```bash
+pip install pytest
 ```
 
 ---
 
 ## 配置
 
-打开 [config.yaml](E:\Xin_Tool\ResearchTailor\config.yaml)，填写 DeepSeek API Key：
+复制配置模板并填写 DeepSeek API Key：
+
+```bash
+cp config.yaml.example config.yaml
+```
+
+然后编辑 `config.yaml`：
 
 ```yaml
 deepseek:
   api_key: "YOUR_DEEPSEEK_API_KEY"
 ```
 
-其余配置也都集中在 `config.yaml` 中，包括：
+所有配置均集中在 `config.yaml`，包括：
 
-- DeepSeek 模型与参数
-- 六个提取模块定义
-- Stage 3 中使用的硬性筛选条件
-- 项目目录与模块池目录
+| 配置块 | 内容 |
+|--------|------|
+| `deepseek` | API Key、模型选择、max_tokens、temperature |
+| `extraction.modules` | 六个提取模块定义 |
+| `filters` | Stage 3 硬性筛选条件 |
+| `chunking` | 长文分块参数（见下） |
+| `paths` | projects 与 module_pool 目录 |
 
-当前默认配置中：
+### 分块参数（`chunking`）
 
-- `model: deepseek-chat`
-- `max_tokens: 4096`
+```yaml
+chunking:
+  max_tokens: 12000         # 每个 chunk 的 token 上限（估算值）
+  overlap_tokens: 500       # 相邻 chunk 的重叠 token 数
+  chars_per_token: 2.5      # 英文主导论文用 2.5；中英混合用 2.0
+  min_paragraph_tokens: 50  # 短于此值的段落会与下一段合并
+```
 
-一般建议：
+模型建议：
 
-- `deepseek-chat` 作为默认提取模型，更快、更便宜，也更适合稳定结构化抽取
-- `deepseek-reasoner` 适合模块边界更模糊、需要更强推理时使用
+- `deepseek-chat`：默认，速度快、成本低，适合稳定结构化抽取
+- `deepseek-reasoner`：推理更强，适合边界模糊、需要深度理解的论文；可在 `chunking.max_tokens` 调至 `20000`
 
 ---
 
 ## 启动方式
 
-在项目根目录执行：
-
 ```bash
 streamlit run app.py
 ```
 
-应用启动后会打开本地网页界面。
+应用启动后会打开本地网页界面。如果 `config.yaml` 缺少必填字段，界面会显示红色错误提示。
+
+---
+
+## 运行测试
+
+```bash
+python -m pytest tests/ -v
+```
 
 ---
 
@@ -100,16 +124,20 @@ streamlit run app.py
 
 ```text
 LitRecombine/
-├── app.py
-├── config.yaml
+├── app.py                        # Streamlit 主入口
+├── config.yaml.example           # 配置模板（复制为 config.yaml 后使用）
 ├── requirements.txt
 ├── README.md
+├── README_en.md
 ├── research_direction_workflow.md
 ├── scripts/
-│   ├── extract_text.py
-│   ├── extract_modules.py
-│   ├── format_consolidated.py
-│   └── parse_candidates.py
+│   ├── extract_text.py           # Stage 2a：PDF → JSON 全文提取
+│   ├── extract_modules.py        # Stage 2b：六模块提取（支持长文分块）
+│   ├── format_consolidated.py    # Stage 2c：合并 per-paper 提取结果
+│   └── parse_candidates.py       # Stage 4a：解析 Claude 输出为候选文件
+├── tests/
+│   ├── test_chunking.py          # 分块函数单元测试
+│   └── test_parse_candidates.py  # 候选解析正则单元测试
 ├── module_pool/
 │   ├── core_method/
 │   ├── experimental_scenario/
@@ -117,19 +145,13 @@ LitRecombine/
 │   ├── acknowledged_limitations/
 │   ├── evaluation_metrics/
 │   └── measurement_instruments/
-└── projects/
-    └── YYYY-MM-DD_HHMMSS_label/
+└── projects/                     # 每次 run 的输出（不纳入版本控制）
+    └── YYYY-MM-DD_HHMMSS[_label]/
         ├── papers/
         ├── extracted_text/
         ├── module_extractions/
         └── candidates/
 ```
-
-说明：
-
-- `projects/` 用于存放每一次运行的完整结果
-- 每次新建 run 时，目录名格式为 `YYYY-MM-DD_HHMMSS[_label]`
-- `module_pool/` 用于跨 run 复用高质量模块文本
 
 ---
 
@@ -139,12 +161,7 @@ LitRecombine/
 
 在首页创建一个新的 run，可以输入自定义标签，也可以只使用自动生成的时间戳。
 
-应用会：
-
-- 创建当前 run 的目录结构
-- 提供打开 `papers/` 文件夹的按钮
-
-你需要把待分析的 PDF 放入当前 run 的 `papers/` 目录中。
+应用会创建当前 run 的目录结构，并提供打开 `papers/` 文件夹的按钮。把待分析的 PDF 放入 `papers/` 目录即可。
 
 建议每次收集约 10 篇论文，便于控制提取成本与后续重组复杂度。
 
@@ -152,23 +169,15 @@ LitRecombine/
 
 ### Stage 2：结构化提取
 
-Stage 2 分为三个步骤。
-
 #### 2a：PDF 全文提取
 
-运行 [scripts\extract_text.py](E:\Xin_Tool\ResearchTailor\scripts\extract_text.py) 后，会把每篇 PDF 提取为一个 JSON 文件，保存到：
+将每篇 PDF 提取为 JSON 文件，保存到 `extracted_text/`。JSON 中包含完整文本与逐页备份。
 
-- `extracted_text/`
-
-输出示例：
-
-- `paper01_fulltext.json`
-
-这些 JSON 用作后续处理备份，不是面向人工阅读的主文件。
+若 PDF 为扫描版（无可提取文字），提取后会打印 `[warn]` 提示，JSON 中会写入 `"error": "empty_text"` 字段，后续步骤会自动跳过该文件。
 
 #### 2b：六模块提取
 
-运行 [scripts\extract_modules.py](E:\Xin_Tool\ResearchTailor\scripts\extract_modules.py) 后，会把每篇论文提取成六个模块：
+对每篇论文提取以下六个模块：
 
 1. Core Innovation
 2. Application Scenario
@@ -177,81 +186,33 @@ Stage 2 分为三个步骤。
 5. Evaluation Metrics
 6. Experimental Measurement Methods
 
-每篇论文会输出一个 Markdown 文件，保存在：
+每篇论文输出一个 Markdown 文件，保存在 `module_extractions/`。
 
-- `module_extractions/`
+**长文处理**：论文超过 token 预算时，会自动按四级边界切分（空行 → 句末换行 → 强制截断），对每个 chunk 单独提取，最后做一次合并。所有分块参数均可在 `config.yaml` 的 `chunking:` 块中调整。
 
-当前 Stage 2b 界面中可以直接选择提取模型：
-
-- `deepseek-chat`
-- `deepseek-reasoner`
-
-无需再手动修改 `config.yaml` 才能切换模型。
-
-如果论文较长，当前实现不会再“直接截断前 60000 字符”。而是：
-
-1. 将全文按长度切成多个重叠 chunk
-2. 对每个 chunk 单独提取模块
-3. 再将 chunk 级结果做一次合并
-
-这样可以降低遗漏论文后半部分信息的风险，尤其是：
-
-- limitations
-- unresolved questions
-- evaluation metrics
+**API 容错**：每次 API 调用最多自动重试 3 次（间隔 2/4/8 秒）。若仍失败，会写入 `{paper_id}_extraction_FAILED.md` 作为失败标记，并继续处理其余论文。
 
 #### 2c：合并提取结果
 
-运行 [scripts\format_consolidated.py](E:\Xin_Tool\ResearchTailor\scripts\format_consolidated.py) 后，会把所有 per-paper 提取结果合并成：
+将所有 per-paper 提取结果合并为 `module_extractions/consolidated_extractions.md`，按"模块"而非"论文"组织，便于 Stage 3 的横向比较。
 
-- `module_extractions/consolidated_extractions.md`
+若存在 `_FAILED.md` 标记文件，合并时会打印警告并自动跳过对应论文。
 
-这个文件按“模块”组织，而不是按“论文”组织，便于后续在同一模块下横向比较不同论文内容。
-
-当前输出格式示例：
-
-```md
-# Consolidated Extractions
-
-Papers included: paper01, paper02
-
----
-## Module: Core Innovation
-
-**[paper01]**
-...
-
-**[paper02]**
-...
-```
-
-如果 `module_pool/` 下已有历史高质量模块文本，界面会允许你：
-
-- 按模块查看可用文件
-- 逐项选择要纳入本次 run 的 pool 条目
-
-不会再像之前那样只能“全选全部 pool 文件”。
+若 `module_pool/` 下有历史高质量模块文本，界面会允许按模块逐项选择纳入。
 
 ---
 
 ### Stage 3：研究方向重组
 
-在 Stage 3 中，你需要：
+在 Stage 3 中：
 
 1. 下载 `consolidated_extractions.md`
 2. 复制界面中给出的重组提示词
 3. 将两者一起提交给 Claude
 
-当前界面中的提示词使用原生文本框显示，推荐直接：
-
-- 选中文本
-- 使用 `Ctrl+C` / `Cmd+C` 手动复制
-
-不再依赖不稳定的浏览器脚本复制方案。
-
 #### 当前硬性筛选条件
 
-重组提示词中包含以下硬性过滤：
+重组提示词中包含以下硬性过滤（可在 `config.yaml` 的 `filters:` 中修改）：
 
 - Measurement Instruments 至少包含以下之一：
   - eye tracking
@@ -259,7 +220,7 @@ Papers included: paper01, paper02
   - head movement tracking
   - hand movement tracking
   - validated self-report questionnaires
-- Measurement Instruments 不能包含 EEG
+- Measurement Instruments 不能包含 CAVE
 - 参与者不能涉及临床人群或已确诊疾病个体
 
 ---
@@ -268,99 +229,46 @@ Papers included: paper01, paper02
 
 #### 4a：候选解析
 
-将 Claude 输出全文粘贴回界面后，应用会：
+将 Claude 输出全文粘贴回界面，应用会：
 
 - 保存原始文本到 `candidates/candidates_raw.md`
-- 自动拆分为多个候选文件：
-  - `candidate_001.md`
-  - `candidate_002.md`
-  - ...
+- 拆分为多个候选文件：`candidate_001.md`、`candidate_002.md`……
 
-当前解析器支持两种标题格式：
+解析器支持以下标题格式：
 
-- `**Candidate [1]**`
-- `**Candidate 1**`
+| 格式 | 示例 |
+|------|------|
+| 加粗带括号 | `**Candidate [1]**` |
+| 加粗不带括号 | `**Candidate 1**` |
+| Markdown 标题 | `## Candidate 1`、`### Candidate 1` |
+| 冒号结尾 | `Candidate 1:` |
 
 #### 4b：评估记录
 
-候选生成后，界面会为每个候选提供：
-
-- Decision
-- Rationale
-
-并保存到：
-
-- `candidates/evaluation_record.md`
-
-结构示例：
-
-```md
-## Candidate 001
-- Decision: Keep
-- Rationale: ...
-```
+候选生成后，界面为每个候选提供 Decision 与 Rationale 字段，保存到 `candidates/evaluation_record.md`。
 
 #### 4c：将评估记录作为后续输入
 
-多次运行之后，可以把历史 `evaluation_record.md` 再提交给 Claude，作为后续优化以下内容的参考：
-
-- 六模块设计
-- 重组提示词
-- 候选筛选策略
+多次运行后，可以把历史 `evaluation_record.md` 再提交给 Claude，作为优化六模块设计、重组提示词或候选筛选策略的参考。
 
 ---
 
 ## Module Pool 用法
 
-`module_pool/` 是一个跨 run 的模块复用池。
-
-你可以把历史运行中质量较高的模块文本，手动放入对应子目录，例如：
-
-- `module_pool/core_method/`
-- `module_pool/experimental_scenario/`
-- `module_pool/unresolved_questions/`
-
-在 Stage 2c 中，界面会显示这些 pool 文件，并允许你逐项选择纳入当前合并文件。
-
-被纳入的 pool 内容会在合并文件中以 `[pool]` 标记显示。
-
----
-
-## 关键脚本说明
-
-- [app.py](E:\Xin_Tool\ResearchTailor\app.py)
-  - Streamlit 主入口
-  - 串联四个阶段的界面流程
-
-- [scripts\extract_text.py](E:\Xin_Tool\ResearchTailor\scripts\extract_text.py)
-  - PDF 转 JSON 全文备份
-
-- [scripts\extract_modules.py](E:\Xin_Tool\ResearchTailor\scripts\extract_modules.py)
-  - 调用 DeepSeek 做六模块提取
-  - 长文按 chunk 提取并合并
-  - 支持通过界面切换 `deepseek-chat` / `deepseek-reasoner`
-
-- [scripts\format_consolidated.py](E:\Xin_Tool\ResearchTailor\scripts\format_consolidated.py)
-  - 合并 per-paper 模块结果
-  - 支持按模块逐项选择 `module_pool` 文件
-
-- [scripts\parse_candidates.py](E:\Xin_Tool\ResearchTailor\scripts\parse_candidates.py)
-  - 将 Claude 输出拆分为单独候选文件
-  - 支持 `Candidate [N]` 与 `Candidate N`
+`module_pool/` 是跨 run 的模块复用池。把历史运行中质量较高的模块文本手动放入对应子目录，在 Stage 2c 中即可按模块逐项选择纳入当前合并文件。被纳入的内容会以 `[pool]` 标记显示。
 
 ---
 
 ## 注意事项
 
-- PDF 提取质量依赖 PDF 是否为可复制文本的版本；扫描版通常需要先 OCR
-- Stage 2a 与 Stage 2b 默认会跳过已经存在的输出文件，避免重复处理
-- Stage 4a 重新解析时，会删除旧的 `candidate_*.md` 并写入新的解析结果
+- PDF 提取质量依赖 PDF 是否含可选文本；扫描版需先 OCR
+- Stage 2a 与 Stage 2b 默认跳过已存在的输出文件，避免重复处理
+- Stage 4a 重新解析时，会删除旧的 `candidate_*.md` 并写入新的结果
 - DeepSeek 调用会产生 token 成本，建议在控制台设置额度上限
-- 当前项目仍然要求 Stage 3 手动提交给 Claude，这一步没有自动化
+- Stage 3 目前仍需手动提交给 Claude，尚未自动化
 
 ---
 
 ## 相关文档
 
-- [research_direction_workflow.md](E:\Xin_Tool\ResearchTailor\research_direction_workflow.md)
-  - 更偏设计说明与工作流定义
+- [research_direction_workflow.md](research_direction_workflow.md)：设计说明与工作流定义

@@ -48,51 +48,75 @@ In practice:
 
 ## Installation
 
-Run this in the project root:
-
 ```bash
 pip install -r requirements.txt
+```
+
+For the test suite, also install pytest:
+
+```bash
+pip install pytest
 ```
 
 ---
 
 ## Configuration
 
-Open [config.yaml](E:\Xin_Tool\ResearchTailor\config.yaml) and fill in your DeepSeek API key:
+Copy the config template and fill in your DeepSeek API key:
+
+```bash
+cp config.yaml.example config.yaml
+```
+
+Then edit `config.yaml`:
 
 ```yaml
 deepseek:
   api_key: "YOUR_DEEPSEEK_API_KEY"
 ```
 
-Other settings are also centralized in `config.yaml`, including:
+All settings are centralized in `config.yaml`:
 
-- DeepSeek model and parameters
-- six extraction modules
-- Stage 3 hard filters
-- project and module-pool paths
+| Block | Contents |
+|-------|----------|
+| `deepseek` | API key, model, max_tokens, temperature |
+| `extraction.modules` | Six module definitions |
+| `filters` | Stage 3 hard filters |
+| `chunking` | Long-paper chunking parameters (see below) |
+| `paths` | projects and module_pool directories |
 
-The current default configuration uses:
+### Chunking Parameters (`chunking`)
 
-- `model: deepseek-chat`
-- `max_tokens: 4096`
+```yaml
+chunking:
+  max_tokens: 12000         # token budget per chunk (estimated)
+  overlap_tokens: 500       # overlap between adjacent chunks (in tokens)
+  chars_per_token: 2.5      # 2.5 for English-dominant; 2.0 for mixed CN/EN
+  min_paragraph_tokens: 50  # paragraphs shorter than this merge with the next
+```
 
-Recommended usage:
+Model guidance:
 
-- use `deepseek-chat` as the default extraction model for speed, cost, and stable structured extraction
-- use `deepseek-reasoner` when module boundaries are harder and you want stronger reasoning
+- `deepseek-chat`: default — fast, cost-efficient, reliable for structured extraction
+- `deepseek-reasoner`: stronger reasoning for papers with complex or ambiguous structure; consider raising `chunking.max_tokens` to `20000`
 
 ---
 
 ## Launch
 
-Run this in the project root:
-
 ```bash
 streamlit run app.py
 ```
 
-The app opens as a local web UI.
+The app opens as a local web UI. If `config.yaml` is missing required fields, a red error banner is shown immediately.
+
+---
+
+## Running Tests
+
+```bash
+python -m pytest tests/ -v
+```
 
 ---
 
@@ -100,17 +124,20 @@ The app opens as a local web UI.
 
 ```text
 LitRecombine/
-├── app.py
-├── config.yaml
+├── app.py                        # Streamlit entry point
+├── config.yaml.example           # Config template (copy to config.yaml)
 ├── requirements.txt
 ├── README.md
 ├── README_en.md
 ├── research_direction_workflow.md
 ├── scripts/
-│   ├── extract_text.py
-│   ├── extract_modules.py
-│   ├── format_consolidated.py
-│   └── parse_candidates.py
+│   ├── extract_text.py           # Stage 2a: PDF → JSON full-text extraction
+│   ├── extract_modules.py        # Stage 2b: six-module extraction (with chunking)
+│   ├── format_consolidated.py    # Stage 2c: merge per-paper extractions
+│   └── parse_candidates.py       # Stage 4a: parse Claude output into candidates
+├── tests/
+│   ├── test_chunking.py          # Unit tests for chunking helpers
+│   └── test_parse_candidates.py  # Unit tests for candidate header regex
 ├── module_pool/
 │   ├── core_method/
 │   ├── experimental_scenario/
@@ -118,19 +145,13 @@ LitRecombine/
 │   ├── acknowledged_limitations/
 │   ├── evaluation_metrics/
 │   └── measurement_instruments/
-└── projects/
-    └── YYYY-MM-DD_HHMMSS_label/
+└── projects/                     # Run outputs (not version-controlled)
+    └── YYYY-MM-DD_HHMMSS[_label]/
         ├── papers/
         ├── extracted_text/
         ├── module_extractions/
         └── candidates/
 ```
-
-Notes:
-
-- `projects/` stores the full output of each run
-- new run folders use the format `YYYY-MM-DD_HHMMSS[_label]`
-- `module_pool/` stores reusable module snippets across runs
 
 ---
 
@@ -140,36 +161,23 @@ Notes:
 
 Create a new run in the UI. You can provide a custom label or use the auto-generated timestamp only.
 
-The app will:
+The app creates the run folder structure and provides a button to open the `papers/` folder. Place the PDFs for the current run into `papers/`.
 
-- create the run folder structure
-- provide a button to open the `papers/` folder
-
-Place the PDFs for the current run into `papers/`.
-
-About 10 papers per run is a practical size.
+About 10 papers per run is a practical size for cost and recombination complexity.
 
 ---
 
 ### Stage 2: Structured Extraction
 
-Stage 2 has three steps.
-
 #### 2a: Full-Text Extraction
 
-Run [scripts\extract_text.py](E:\Xin_Tool\ResearchTailor\scripts\extract_text.py) to convert each PDF into a JSON full-text backup saved in:
+Converts each PDF to a JSON file saved in `extracted_text/`. The JSON contains the full text and a per-page breakdown.
 
-- `extracted_text/`
-
-Example output:
-
-- `paper01_fulltext.json`
-
-These JSON files are backups for downstream processing rather than the main human-readable artifacts.
+If a PDF contains no selectable text (e.g. a scanned image), a `[warn]` message is printed and an `"error": "empty_text"` field is written into the JSON. Downstream steps skip these files automatically.
 
 #### 2b: Six-Module Extraction
 
-Run [scripts\extract_modules.py](E:\Xin_Tool\ResearchTailor\scripts\extract_modules.py) to extract six modules from each paper:
+Extracts six modules from each paper:
 
 1. Core Innovation
 2. Application Scenario
@@ -178,60 +186,19 @@ Run [scripts\extract_modules.py](E:\Xin_Tool\ResearchTailor\scripts\extract_modu
 5. Evaluation Metrics
 6. Experimental Measurement Methods
 
-Each paper produces one Markdown file in:
+Each paper produces one Markdown file in `module_extractions/`.
 
-- `module_extractions/`
+**Long-paper handling:** When a paper exceeds the token budget, the text is split using a four-level boundary hierarchy (blank lines → sentence-ending newlines → force-split), modules are extracted from each chunk independently, and the results are merged in a final consolidation call. All chunking parameters are configurable in `config.yaml`.
 
-The Stage 2b UI now lets you choose the extraction model directly:
-
-- `deepseek-chat`
-- `deepseek-reasoner`
-
-so you do not have to edit `config.yaml` just to switch models.
-
-For long papers, the current implementation does not hard-truncate the first 60,000 characters anymore. Instead it:
-
-1. splits the full text into overlapping chunks
-2. extracts modules from each chunk separately
-3. merges the chunk-level outputs into one final extraction
-
-This reduces the risk of missing information from later sections, especially:
-
-- limitations
-- unresolved questions
-- evaluation metrics
+**API fault tolerance:** Each API call is retried up to 3 times with exponential backoff (2 s / 4 s / 8 s). If all retries fail, a `{paper_id}_extraction_FAILED.md` sentinel file is written and the script continues with the remaining papers.
 
 #### 2c: Consolidated Extraction
 
-Run [scripts\format_consolidated.py](E:\Xin_Tool\ResearchTailor\scripts\format_consolidated.py) to merge all per-paper extractions into:
+Merges all per-paper extractions into `module_extractions/consolidated_extractions.md`, organized by module rather than by paper.
 
-- `module_extractions/consolidated_extractions.md`
+If any `_FAILED.md` sentinel files exist, a warning is printed and those papers are excluded from the consolidation.
 
-This file is organized by module rather than by paper, which makes cross-paper comparison easier during recombination.
-
-Current output structure example:
-
-```md
-# Consolidated Extractions
-
-Papers included: paper01, paper02
-
----
-## Module: Core Innovation
-
-**[paper01]**
-...
-
-**[paper02]**
-...
-```
-
-If `module_pool/` contains historical high-quality module snippets, the UI lets you:
-
-- inspect available files by module
-- select only the specific pool entries to include in the current run
-
-It no longer forces all pool files in at once.
+If `module_pool/` contains historical high-quality snippets, the UI lets you select specific entries to include.
 
 ---
 
@@ -240,19 +207,12 @@ It no longer forces all pool files in at once.
 In Stage 3, you:
 
 1. download `consolidated_extractions.md`
-2. copy the recombination prompt shown in the UI
+2. copy the recombination prompt from the UI
 3. submit both to Claude
-
-The prompt is displayed in a native text area. The recommended way is:
-
-- select the text
-- copy it manually with `Ctrl+C` or `Cmd+C`
-
-The project no longer relies on a fragile browser-script clipboard solution.
 
 #### Current Hard Filters
 
-The recombination prompt includes these hard filters:
+The recombination prompt includes the following hard filters (configurable in `config.yaml` under `filters:`):
 
 - Measurement Instruments must include at least one of:
   - eye tracking
@@ -260,7 +220,7 @@ The recombination prompt includes these hard filters:
   - head movement tracking
   - hand movement tracking
   - validated self-report questionnaires
-- Measurement Instruments must not include EEG
+- Measurement Instruments must not include CAVE
 - participants must not involve clinical populations or diagnosed conditions
 
 ---
@@ -272,96 +232,43 @@ The recombination prompt includes these hard filters:
 Paste the full Claude output back into the UI. The app will:
 
 - save the raw text to `candidates/candidates_raw.md`
-- split it into candidate files such as:
-  - `candidate_001.md`
-  - `candidate_002.md`
-  - ...
+- split it into candidate files: `candidate_001.md`, `candidate_002.md`, ...
 
-The parser currently supports both heading styles:
+The parser supports the following header formats:
 
-- `**Candidate [1]**`
-- `**Candidate 1**`
+| Format | Example |
+|--------|---------|
+| Bold with brackets | `**Candidate [1]**` |
+| Bold plain | `**Candidate 1**` |
+| Markdown heading | `## Candidate 1`, `### Candidate 1` |
+| Colon suffix | `Candidate 1:` |
 
 #### 4b: Evaluation Record
 
-After candidates are created, the UI provides:
+After candidates are created, the UI provides Decision and Rationale fields for each candidate, saved to `candidates/evaluation_record.md`.
 
-- Decision
-- Rationale
+#### 4c: Reuse Evaluation Records
 
-and saves the result to:
-
-- `candidates/evaluation_record.md`
-
-Example:
-
-```md
-## Candidate 001
-- Decision: Keep
-- Rationale: ...
-```
-
-#### 4c: Reuse Evaluation Records Later
-
-After multiple runs, historical `evaluation_record.md` files can be sent back to Claude as additional context for improving:
-
-- module design
-- recombination prompts
-- candidate filtering strategy
+After multiple runs, historical `evaluation_record.md` files can be sent back to Claude as context for improving module design, recombination prompts, or candidate filtering strategy.
 
 ---
 
 ## Module Pool
 
-`module_pool/` is a cross-run reuse pool for module text.
-
-You can manually place high-quality module snippets from earlier runs into subfolders such as:
-
-- `module_pool/core_method/`
-- `module_pool/experimental_scenario/`
-- `module_pool/unresolved_questions/`
-
-In Stage 2c, the UI displays those files and lets you select specific entries to include in the consolidated file.
-
-Included pool content is marked with `[pool]` in the merged output.
-
----
-
-## Key Scripts
-
-- [app.py](E:\Xin_Tool\ResearchTailor\app.py)
-  - Streamlit entry point
-  - coordinates the four workflow stages
-
-- [scripts\extract_text.py](E:\Xin_Tool\ResearchTailor\scripts\extract_text.py)
-  - PDF to JSON full-text backup
-
-- [scripts\extract_modules.py](E:\Xin_Tool\ResearchTailor\scripts\extract_modules.py)
-  - DeepSeek-based six-module extraction
-  - chunk-based extraction and merge for long papers
-  - supports UI-based switching between `deepseek-chat` and `deepseek-reasoner`
-
-- [scripts\format_consolidated.py](E:\Xin_Tool\ResearchTailor\scripts\format_consolidated.py)
-  - merges per-paper module outputs
-  - supports per-module selection from `module_pool`
-
-- [scripts\parse_candidates.py](E:\Xin_Tool\ResearchTailor\scripts\parse_candidates.py)
-  - splits Claude output into individual candidate files
-  - supports both `Candidate [N]` and `Candidate N`
+`module_pool/` is a cross-run reuse pool. Place high-quality module snippets from earlier runs into the appropriate subfolders. In Stage 2c, the UI lets you select specific entries per module to include in the consolidated file. Included pool content is marked with `[pool]` in the output.
 
 ---
 
 ## Notes
 
-- PDF extraction quality depends on whether the PDF contains selectable text; scanned PDFs often need OCR first
-- Stage 2a and Stage 2b skip existing outputs by default to avoid redundant work
-- re-running Stage 4a removes old `candidate_*.md` files and writes the newly parsed set
-- DeepSeek usage incurs token cost, so setting usage limits is a good idea
-- Stage 3 is still manual; it is not automated in the current implementation
+- PDF extraction quality depends on whether the PDF contains selectable text; scanned PDFs need OCR first
+- Stage 2a and Stage 2b skip existing outputs by default to avoid redundant processing
+- Re-running Stage 4a removes old `candidate_*.md` files and writes the newly parsed set
+- DeepSeek usage incurs token cost; setting usage limits in the DeepSeek console is recommended
+- Stage 3 is still manual — submitting to Claude is not automated in the current implementation
 
 ---
 
 ## Related Document
 
-- [research_direction_workflow.md](E:\Xin_Tool\ResearchTailor\research_direction_workflow.md)
-  - design-oriented workflow definition
+- [research_direction_workflow.md](research_direction_workflow.md): design-oriented workflow definition

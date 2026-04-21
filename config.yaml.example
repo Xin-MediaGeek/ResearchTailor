@@ -1,8 +1,9 @@
 # LitRecombine Configuration
+# Copy this file to config.yaml and fill in your DeepSeek API key.
 
 # DeepSeek API
 deepseek:
-  api_key: "sk-0180498ee5784b95b3937510fd65774a"
+  api_key: "YOUR_DEEPSEEK_API_KEY"
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"
   max_tokens: 4096
