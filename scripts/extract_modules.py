@@ -10,6 +10,7 @@ import json
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -243,8 +244,18 @@ def call_model(client: OpenAI, ds_config: dict, user_prompt: str) -> str:
     if ds_config["model"] != "deepseek-reasoner":
         request_args["temperature"] = ds_config["temperature"]
 
-    response = client.chat.completions.create(**request_args)
-    return response.choices[0].message.content or ""
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = client.chat.completions.create(**request_args)
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            last_exc = e
+            wait = 2 ** (attempt + 1)
+            print(f"    [retry] API error (attempt {attempt + 1}/3): {e}. Retrying in {wait}s...")
+            time.sleep(wait)
+
+    raise last_exc  # type: ignore[misc]
 
 
 def parse_module_response(response_text: str, modules: list[dict]) -> dict:
@@ -380,6 +391,13 @@ def main():
         except Exception as e:
             errors.append((paper_id, str(e)))
             print(f"  [err]  {paper_id}: {e}")
+            failed_path = output_dir / f"{paper_id}_extraction_FAILED.md"
+            failed_path.write_text(
+                f"# Extraction Failed: {paper_id}\n\n"
+                f"**Error:** {e}\n\n"
+                f"**Timestamp:** {datetime.now().isoformat()}\n",
+                encoding="utf-8",
+            )
 
     if errors:
         print(f"\nCompleted with {len(errors)} error(s):")
