@@ -10,7 +10,6 @@ Usage:
 """
 
 import sys
-import re
 import yaml
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from pathlib import Path
 
 def load_config() -> dict:
     config_path = Path(__file__).parent.parent / "config.yaml"
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -36,38 +35,49 @@ def parse_extraction_file(md_path: Path, modules: list[dict]) -> dict:
     text = md_path.read_text(encoding="utf-8")
     result = {m["id"]: "Not reported" for m in modules}
 
+    # Map of module id → old Chinese labels used before the rename to English
+    _LEGACY_LABELS = {"core_method": "核心创新"}
+
     for i, m in enumerate(modules):
-        # Match section from this module header to the next
-        next_headers = []
-        for j in range(i + 1, len(modules)):
-            next_headers.append(f"## {modules[j]['label']}")
-            for alias in modules[j].get("aliases", []):
-                next_headers.append(f"## {alias}")
-        pattern_end = "|".join(re.escape(h) for h in next_headers) if next_headers else None
-
-        possible_headers = [m["label"], *m.get("aliases", [])]
-        header_matches = []
-        for header_label in possible_headers:
-            header = f"## {header_label}"
-            start = text.find(header)
-            if start != -1:
-                header_matches.append((start, len(header)))
-
-        if not header_matches:
+        header = f"## {m['label']}"
+        start = text.find(header)
+        if start == -1:
+            legacy = _LEGACY_LABELS.get(m["id"])
+            if legacy:
+                header = f"## {legacy}"
+                start = text.find(header)
+        if start == -1:
             continue
+        start += len(header)
 
-        start, header_len = min(header_matches, key=lambda item: item[0])
-        start += header_len
-        if pattern_end:
-            end_match = re.search(pattern_end, text[start:])
-            end = start + end_match.start() if end_match else len(text)
-        else:
-            end = len(text)
+        end = len(text)
+        for j in range(i + 1, len(modules)):
+            next_label = modules[j]['label']
+            next_pos = text.find(f"## {next_label}", start)
+            if next_pos == -1:
+                legacy_j = _LEGACY_LABELS.get(modules[j]["id"])
+                if legacy_j:
+                    next_pos = text.find(f"## {legacy_j}", start)
+            if next_pos != -1:
+                end = min(end, next_pos)
+                break
 
         content = text[start:end].strip()
         result[m["id"]] = content if content else "Not reported"
 
     return result
+
+
+def load_review_decisions(module_dir: Path) -> dict:
+    """Load per-module inclusion decisions from extraction_review.json.
+    Returns {paper_id: {module_id: bool}} where True = include.
+    Returns empty dict if file is absent (all included by default)."""
+    import json
+    review_path = module_dir / "extraction_review.json"
+    if not review_path.exists():
+        return {}
+    with open(review_path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_pool_entries(
@@ -99,28 +109,58 @@ def load_pool_entries(
 # Rendering
 # ─────────────────────────────────────────────
 
+def _resolve_module_decision(mod_dec) -> tuple[bool, str | None]:
+    """Return (include, edited_content) from a review decision value.
+
+    Handles both old format (bool) and new format (dict with include/content).
+    edited_content is None when no override was recorded.
+    """
+    if isinstance(mod_dec, bool):
+        return mod_dec, None
+    if isinstance(mod_dec, dict):
+        include = mod_dec.get("include", True)
+        content = mod_dec.get("content") or None
+        return include, content
+    return True, None
+
+
 def render_consolidated(
     modules: list[dict],
     paper_ids: list[str],
     all_extractions: dict,
-    pool_entries: dict
+    pool_entries: dict,
+    review_decisions: dict | None = None,
 ) -> str:
     """
     Render consolidated Markdown organized by module.
     all_extractions: {paper_id: {module_id: content}}
     pool_entries: {module_id: [(label, content)]}
+    review_decisions: {paper_id: {module_id: bool | {include, content}}}
     """
     lines = ["# Consolidated Extractions\n"]
-    lines.append(
-        f"Papers included: {', '.join(paper_ids)}\n"
-    )
+
+    # Paper index
+    lines.append("## Paper Index\n")
+    for idx, paper_id in enumerate(paper_ids, start=1):
+        lines.append(f"- P{idx}: {paper_id}")
+    lines.append("")
 
     for m in modules:
         lines.append(f"---\n## Module: {m['label']}\n")
 
-        for paper_id in paper_ids:
-            content = all_extractions.get(paper_id, {}).get(m["id"], "Not reported")
-            lines.append(f"**[{paper_id}]**")
+        for idx, paper_id in enumerate(paper_ids, start=1):
+            include = True
+            edited_content = None
+            if review_decisions:
+                paper_dec = review_decisions.get(paper_id, {})
+                mod_dec = paper_dec.get(m["id"], True)
+                include, edited_content = _resolve_module_decision(mod_dec)
+
+            if not include:
+                continue
+
+            content = edited_content if edited_content else all_extractions.get(paper_id, {}).get(m["id"], "Not reported")
+            lines.append(f"**[P{idx}]**")
             lines.append(content)
             lines.append("")
 
@@ -202,7 +242,17 @@ def main():
             if entries:
                 print(f"  [pool]   {m['label']}: {len(entries)} entry/entries included")
 
-    consolidated = render_consolidated(modules, paper_ids, all_extractions, pool_entries)
+    review_decisions = load_review_decisions(module_dir)
+    if review_decisions:
+        edited_count = sum(
+            1
+            for paper_dec in review_decisions.values()
+            for v in paper_dec.values()
+            if isinstance(v, dict) and v.get("content")
+        )
+        print(f"[info] Applying extraction review decisions ({edited_count} module(s) with edited content)")
+
+    consolidated = render_consolidated(modules, paper_ids, all_extractions, pool_entries, review_decisions)
     output_path.write_text(consolidated, encoding="utf-8")
     print(f"\nConsolidated file written to: {output_path}")
 

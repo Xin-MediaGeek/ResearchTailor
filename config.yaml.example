@@ -19,28 +19,19 @@ extraction:
   # Modules to extract from each paper
   modules:
     - id: "core_method"
-      label: "Core Innovation"
-      aliases: ["Core Method"]
-      description: "The primary technical method, analytical approach, theoretical innovation, or application innovation used in the study, but only when the authors explicitly present it as an innovation."
+      label: "Innovation Method"
+      description: "The primary technical method, analytical approach, theoretical innovation, or application innovation used in the study, as explicitly positioned or described by the authors in comparison to prior work."
     - id: "experimental_scenario"
       label: "Application Scenario"
-      aliases: ["Experimental Scenario"]
       description: "The specific task type or situational setup used in the experiment, and what problem the study addresses in that scenario."
     - id: "unresolved_questions"
       label: "Future Research Directions"
-      aliases: ["Unresolved Questions"]
-      description: "Problems the authors explicitly state were not solved in the current study but could be addressed in future work, together with the stated reasons and why the direction is necessary."
-    - id: "acknowledged_limitations"
-      label: "Acknowledged Limitations"
-      aliases: []
-      description: "Methodological or design flaws the authors explicitly identified."
+      description: "ALL problems the authors explicitly state were not solved in the current study but could be addressed in future work, together with the stated reasons and why the direction is necessary."
     - id: "evaluation_metrics"
       label: "Evaluation Metrics"
-      aliases: []
-      description: "The dependent variables or criteria used to measure outcomes."
+      description: "The dependent variables or criteria used to measure experimental outcomes or intervention effects."
     - id: "measurement_instruments"
       label: "Experimental Measurement Methods"
-      aliases: ["Measurement Instruments"]
       description: "The core data collection methods used in the experiment, including software algorithms and hardware facilities."
 
 # Recombination hard filters (displayed in UI, embedded in prompt)

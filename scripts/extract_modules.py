@@ -45,7 +45,8 @@ def build_client(config: dict) -> OpenAI:
 SYSTEM_PROMPT = """You are a research assistant extracting structured information from academic papers.
 You extract only what is explicitly stated in the paper.
 You never infer, paraphrase beyond what is stated, or fill missing information with plausible content.
-If a module has no corresponding content in the paper, you output exactly: Not reported"""
+If a module has no corresponding content in the paper, you output exactly: Not reported
+All extracted content must be written in Chinese (中文). Keep module headers exactly as shown. Only the content under each header should be in Chinese."""
 
 
 def build_module_blocks(modules: list[dict]) -> str:
@@ -56,16 +57,13 @@ def build_module_blocks(modules: list[dict]) -> str:
 
 
 def get_header_variants(module: dict, index: int) -> list[str]:
-    labels = [module["label"], *module.get("aliases", [])]
-    variants = []
-    for label in labels:
-        variants.extend([
-            f"**Module {index + 1} — {label}**",
-            f"Module {index + 1} — {label}",
-            f"**{label}**",
-            label + ":",
-        ])
-    return variants
+    label = module["label"]
+    return [
+        f"**Module {index + 1} — {label}**",
+        f"Module {index + 1} — {label}",
+        f"**{label}**",
+        label + ":",
+    ]
 
 
 def estimate_tokens(text: str, chars_per_token: float) -> int:
@@ -194,9 +192,10 @@ def build_extraction_prompt(
             "If a module is not covered in this chunk, output exactly: Not reported.\n"
         )
 
-    return f"""Extract the following six modules from this research paper.
+    return f"""Extract the following five modules from this research paper.
 For each module, provide only information explicitly stated in the paper.
 If a module has no corresponding content, output exactly: Not reported
+Write all extracted content in Chinese (中文). Keep the module headers exactly as shown below.
 
 Paper ID: {paper_id}
 {chunk_note}
@@ -221,6 +220,7 @@ Rules:
 - Do not invent, infer, or reconcile contradictions with outside knowledge.
 - If a module is Not reported in every chunk, output exactly: Not reported
 - When multiple chunks provide compatible details for the same module, combine them concisely into one entry.
+- Write all merged content in Chinese (中文). Keep the module headers exactly as shown.
 
 Return the final answer using exactly these module headers:
 
@@ -339,15 +339,42 @@ def main():
 
     print(f"Found {len(json_files)} paper(s). Extracting modules with {ds_config['model']}...")
 
+    progress_path = run_path / "2b_progress.json"
+    started_at = datetime.now().isoformat()
+    elapsed_per_paper: list[float] = []
+    done_count = 0
+    skipped_count = 0
+    total_count = len(json_files)
+
+    def _write_progress(current_paper: str = ""):
+        progress_path.write_text(
+            json.dumps({
+                "total": total_count,
+                "done": done_count,
+                "skipped": skipped_count,
+                "elapsed_per_paper": elapsed_per_paper,
+                "started_at": started_at,
+                "current_paper": current_paper,
+            }),
+            encoding="utf-8",
+        )
+
+    _write_progress()
+
     errors = []
     for json_path in json_files:
         paper_id = json_path.stem.replace("_fulltext", "")
         out_path = output_dir / f"{paper_id}_extraction.md"
 
+        _write_progress(paper_id)
+
         if out_path.exists():
             print(f"  [skip] {paper_id} (already extracted)")
+            skipped_count += 1
+            _write_progress()
             continue
 
+        paper_start = time.monotonic()
         try:
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -355,6 +382,8 @@ def main():
             full_text = data.get("full_text", "")
             if not full_text.strip():
                 print(f"  [warn] {paper_id}: empty full text, skipping.")
+                skipped_count += 1
+                _write_progress()
                 continue
 
             text_chunks = split_text_into_chunks(full_text, config["chunking"])
@@ -386,11 +415,18 @@ def main():
             out_path.write_text(markdown, encoding="utf-8")
             print(f"  [ok]   {paper_id} -> {out_path.name}")
 
+            elapsed_per_paper.append(time.monotonic() - paper_start)
+            done_count += 1
+            _write_progress()
+
             time.sleep(1)
 
         except Exception as e:
+            elapsed_per_paper.append(time.monotonic() - paper_start)
+            done_count += 1
             errors.append((paper_id, str(e)))
             print(f"  [err]  {paper_id}: {e}")
+            _write_progress()
             failed_path = output_dir / f"{paper_id}_extraction_FAILED.md"
             failed_path.write_text(
                 f"# Extraction Failed: {paper_id}\n\n"

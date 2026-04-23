@@ -1,0 +1,31 @@
+hard_filters: "应用以下硬性筛选条件，任何一条不满足则丢弃该候选方向：\n1. 实验测量方法必须至少包含以下之一：\n   - eye tracking\n\
+  \   - heart rate measurement\n   - head movement tracking\n   - hand movement tracking\n\
+  \   - validated self-report questionnaires\n2. 实验测量方法排除以下内容：\n   \n3. 参与者要求不得涉及以下任何内容：\n\
+  \   - clinical populations"
+output_format: '对于每个通过筛选的候选方向，按以下格式输出：
+
+
+  **Candidate [N]**
+
+  - Research question: [一句话概括该组合所暗示的研究问题]
+
+  - Source papers: [列出paper IDs]
+
+  - Future Research Directions: [来自哪篇论文的Future Research Directions，具体内容]
+
+  - Innovation method: [来自哪篇论文，什么内容]
+
+  - Application Scenario: [哪篇论文，什么内容]
+
+  - Evaluation Metrics: [哪篇论文，什么内容]
+
+  - Experimental Measurement Methods: [哪篇论文，什么内容]
+
+  - Internal consistency check: [一句话说明各组合模块是否逻辑兼容，如有冲突请指出]，并输出合理性评价分数（作为候选排序依据）'
+quality_rules: 只输出各模块真的能配合成一个新研究的候选方向，特别是Future Research Directions真的能够被缝合后的其他模块回应与解决，不能为了得到结果而强行缝合。最多输出10个候选方向，按内部一致性分数从高到低排列。
+source_constraint: 每个候选方向的所有模块来源论文数必须大于1且不超过3篇。不同模块可以来自同一论文。不是每一篇论文都必须做出贡献。Paper ID必须使用输入文档中已有的编号，不得由推理模型自行命名或重新编号。
+task_intro: '你将收到多篇研究论文的结构化提取内容。每篇论文已按以下模块进行总结：Innovation method、Application Scenario、Future
+  Research Directions、Evaluation Metrics、Experimental Measurement Methods。
+
+
+  你的任务是通过组合不同论文中的模块，生成候选研究方向。请用中文输出所有的结果。'

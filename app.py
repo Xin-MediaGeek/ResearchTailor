@@ -3,6 +3,8 @@ import yaml
 import os
 import subprocess
 import sys
+import time
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -246,19 +248,6 @@ def render_stage1(run_path: Path):
         st.warning("No PDFs found in papers/ yet.")
 
     st.divider()
-    st.markdown("**Year range guidance for collection**")
-    guidance = [
-        ("Core Method", "No restriction", "Foundational methods may come from earlier work"),
-        ("Experimental Scenario", "Last 3 years", "Scenarios should reflect current VR hardware"),
-        ("Unresolved Questions", "Last 3 years", "Should reflect current research frontier"),
-        ("Acknowledged Limitations", "Last 3 years", "Should reflect current research frontier"),
-        ("Evaluation Metrics", "No restriction", "Established metrics may come from earlier work"),
-        ("Measurement Instruments", "Last 5 years", "Balance maturity with technical currency"),
-    ]
-    for module, year_range, rationale in guidance:
-        st.markdown(f"- **{module}**: {year_range} — {rationale}")
-
-    st.divider()
     if pdfs:
         if st.button("Confirm collection and proceed to Stage 2", type="primary"):
             st.session_state[f"{run_path.name}_stage1_done"] = True
@@ -268,6 +257,97 @@ def render_stage1(run_path: Path):
 # ─────────────────────────────────────────────
 # Stage 2: Structured Extraction
 # ─────────────────────────────────────────────
+
+def _parse_module_content(text: str, module, all_modules) -> str:
+    """Extract the content for one module from a paper's extraction Markdown."""
+    header = f"## {module['label']}"
+    start = text.find(header)
+    if start == -1:
+        return "Not reported"
+    start += len(header)
+    end = len(text)
+    for other in all_modules:
+        if other["id"] == module["id"]:
+            continue
+        pos = text.find(f"## {other['label']}", start)
+        if pos != -1 and pos < end:
+            end = pos
+    content = text[start:end].strip()
+    return content if content else "Not reported"
+
+
+def render_extraction_review(run_path: Path):
+    """Review panel between 2b and 2c: per-module include/exclude toggles with inline editing."""
+    import json as _json
+    module_dir = run_path / "module_extractions"
+    review_path = module_dir / "extraction_review.json"
+    modules = CONFIG["extraction"]["modules"]
+
+    extraction_files = sorted(module_dir.glob("*_extraction.md"))
+    if not extraction_files:
+        return
+
+    st.markdown("#### Step 2b-Review — Review Extracted Modules")
+    st.caption(
+        "Review each paper's extracted modules before consolidation. "
+        "Uncheck a module to exclude it, or edit its content directly. "
+        "Edited content will be used in the consolidated file."
+    )
+
+    raw = _json.loads(review_path.read_text(encoding="utf-8")) if review_path.exists() else {}
+
+    new_decisions = {}
+    for idx, md_file in enumerate(extraction_files, start=1):
+        paper_id = md_file.stem.replace("_extraction", "")
+        text = md_file.read_text(encoding="utf-8")
+        paper_existing = raw.get(paper_id, {})
+
+        with st.expander(f"P{idx}: {paper_id}", expanded=False):
+            new_decisions[paper_id] = {}
+            for m in modules:
+                original = _parse_module_content(text, m, modules)
+
+                prev = paper_existing.get(m["id"], {})
+                if isinstance(prev, bool):
+                    default_include = prev
+                    default_content = original
+                elif isinstance(prev, dict):
+                    default_include = prev.get("include", True)
+                    default_content = prev.get("content") or original
+                else:
+                    default_include = True
+                    default_content = original
+
+                include = st.checkbox(
+                    m["label"],
+                    value=default_include,
+                    key=f"review_{run_path.name}_{paper_id}_{m['id']}",
+                )
+                edited = st.text_area(
+                    f"edit_{m['id']}",
+                    value=default_content,
+                    height=180,
+                    key=f"review_content_{run_path.name}_{paper_id}_{m['id']}",
+                    label_visibility="collapsed",
+                    disabled=not include,
+                )
+                new_decisions[paper_id][m["id"]] = {
+                    "include": include,
+                    "content": edited,
+                }
+                st.divider()
+
+    if st.button(
+        "Save review decisions",
+        key=f"save_review_{run_path.name}",
+        use_container_width=True,
+    ):
+        review_path.write_text(
+            _json.dumps(new_decisions, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        st.success("Review decisions saved.")
+
 
 def render_stage2(run_path: Path):
     stage_header(2, "Structured Extraction")
@@ -325,14 +405,75 @@ def render_stage2(run_path: Path):
                 st.markdown(f"**{md_file.name}**")
                 st.code(md_file.read_text(encoding="utf-8"), language="markdown")
 
+    fulltext_json_files = list((run_path / "extracted_text").glob("*_fulltext.json"))
+    existing_md_ids = {f.stem.replace("_extraction", "") for f in module_dir.glob("*_extraction.md")}
+    pending_count = sum(
+        1 for f in fulltext_json_files
+        if f.stem.replace("_fulltext", "") not in existing_md_ids
+    )
+    if pending_count > 0:
+        st.caption(f"{pending_count} paper(s) pending extraction.")
+
     if st.button("Run module extraction (2b)", use_container_width=True):
-        with st.spinner("Calling DeepSeek API for each paper..."):
-            success, output = run_script("extract_modules.py", str(run_path), "--model", selected_model)
-        if success:
+        progress_path = run_path / "2b_progress.json"
+        if progress_path.exists():
+            progress_path.unlink()
+
+        script_path = ROOT / "scripts" / "extract_modules.py"
+        proc = subprocess.Popen(
+            ["python", str(script_path), str(run_path), "--model", selected_model],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        bar_placeholder = st.empty()
+        eta_placeholder = st.empty()
+
+        while proc.poll() is None:
+            if progress_path.exists():
+                try:
+                    prog = json.loads(progress_path.read_text(encoding="utf-8"))
+                    total = prog.get("total", 0)
+                    done = prog.get("done", 0)
+                    skipped = prog.get("skipped", 0)
+                    elapsed = prog.get("elapsed_per_paper", [])
+                    current = prog.get("current_paper", "")
+                    processed = done + skipped
+                    if total > 0:
+                        bar_placeholder.progress(
+                            min(processed / total, 1.0),
+                            text=f"Paper {processed} / {total}" + (f" — {current}" if current else ""),
+                        )
+                    if elapsed and total > 0:
+                        avg = sum(elapsed) / len(elapsed)
+                        remaining = max(total - processed, 0)
+                        eta_sec = avg * remaining
+                        mins, secs = divmod(int(eta_sec), 60)
+                        eta_str = f"{mins} min {secs:02d} sec" if mins else f"{secs} sec"
+                        eta_placeholder.caption(
+                            f"Avg {avg:.0f} s/paper — est. **{eta_str}** remaining"
+                        )
+                    elif total > 0:
+                        eta_placeholder.caption("Estimating time — waiting for first paper to complete...")
+                except Exception:
+                    pass
+            time.sleep(2)
+
+        stdout, stderr = proc.communicate()
+        bar_placeholder.empty()
+        eta_placeholder.empty()
+        if progress_path.exists():
+            progress_path.unlink()
+
+        if proc.returncode == 0:
             st.success("Module extraction complete.")
             st.rerun()
         else:
-            st.error(f"Error: {output}")
+            st.error(f"Error: {stderr or stdout}")
+
+    st.divider()
+    render_extraction_review(run_path)
 
     st.divider()
     st.markdown("#### Step 2c — Consolidated Extraction File")
@@ -373,6 +514,7 @@ def render_stage2(run_path: Path):
             success, output = run_script("format_consolidated.py", *args)
         if success:
             st.success("Consolidated file generated.")
+            open_path_in_file_explorer(module_dir)
             st.rerun()
         else:
             st.error(f"Error: {output}")
@@ -387,8 +529,112 @@ def render_stage2(run_path: Path):
                 f,
                 file_name="consolidated_extractions.md",
                 mime="text/markdown",
-                use_container_width=True
+                use_container_width=True,
+                key="dl_consolidated_stage2c"
             )
+
+
+# ─────────────────────────────────────────────
+# Stage 3: Recombination — prompt module helpers
+# ─────────────────────────────────────────────
+
+_MODULE_ORDER = ["task_intro", "source_constraint", "quality_rules", "hard_filters", "output_format"]
+
+_MODULE_LABELS = {
+    "task_intro":        "模块一：任务说明",
+    "source_constraint": "模块二：来源约束",
+    "quality_rules":     "模块三：质量要求",
+    "hard_filters":      "模块四：硬性筛选条件",
+    "output_format":     "模块五：输出格式",
+}
+
+_MODULE_HEIGHTS = {
+    "task_intro": 120,
+    "source_constraint": 120,
+    "quality_rules": 100,
+    "hard_filters": 160,
+    "output_format": 280,
+}
+
+
+def default_prompt_modules() -> dict:
+    cfg = CONFIG.get("filters", {})
+    labels = [m["label"] for m in CONFIG.get("extraction", {}).get("modules", [])]
+    labels_str = "、".join(labels) if labels else "各模块"
+
+    required = "\n".join(f"   - {i}" for i in cfg.get("required_instruments", []))
+    excluded_inst = "\n".join(f"   - {i}" for i in cfg.get("excluded_instruments", []))
+    excluded_pop = "\n".join(f"   - {i}" for i in cfg.get("excluded_populations", []))
+
+    return {
+        "task_intro": (
+            f"你将收到多篇研究论文的结构化提取内容。每篇论文已按以下模块进行总结：{labels_str}。\n\n"
+            "你的任务是通过组合不同论文中的模块，生成候选研究方向。请用中文输出所有结果。"
+        ),
+        "source_constraint": (
+            "每个候选方向的所有模块来源论文数必须大于1且不超过3篇。不同模块可以来自同一论文。"
+            "不是每一篇论文都必须做出贡献。Paper ID必须使用输入文档中已有的编号，"
+            "不得由推理模型自行命名或重新编号。"
+        ),
+        "quality_rules": (
+            "只输出各模块真的能配合成一个新研究的候选方向，宁缺毋滥，不能为了得到结果而强行缝合。"
+            "最多输出10个候选方向，按内部一致性分数从高到低排列。"
+        ),
+        "hard_filters": (
+            "应用以下硬性筛选条件，任何一条不满足则丢弃该候选方向：\n"
+            f"1. 实验测量方法必须至少包含以下之一：\n{required}\n"
+            f"2. 实验测量方法不得包含以下任何内容：\n{excluded_inst}\n"
+            f"3. 参与者要求不得涉及以下任何内容：\n{excluded_pop}"
+        ),
+        "output_format": (
+            "对于每个通过筛选的候选方向，按以下格式输出：\n\n"
+            "**Candidate [N]**\n"
+            "- Research question: [一句话概括该组合所暗示的研究问题]\n"
+            "- Source papers: [列出paper IDs]\n"
+            "- Research Directions: [来自哪篇论文的Future Research Directions，具体内容]\n"
+            "- Innovation method: [来自哪篇论文，什么内容]\n"
+            "- Application Scenario: [哪篇论文，什么内容]\n"
+            "- Evaluation Metrics: [哪篇论文，什么内容]\n"
+            "- Experimental Measurement Methods: [哪篇论文，什么内容]\n"
+            "- Internal consistency check: [一句话说明各组合模块是否逻辑兼容，如有张力请指出]，并输出分数（作为候选排序依据）"
+        ),
+    }
+
+
+_GLOBAL_PROMPT_MODULES_PATH = ROOT / "prompt_modules_default.yaml"
+
+
+def load_prompt_modules(run_path: Path) -> dict:
+    defaults = default_prompt_modules()
+    for path in [run_path / "recombination_prompt_modules.yaml", _GLOBAL_PROMPT_MODULES_PATH]:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            return {k: data.get(k, defaults[k]) for k in _MODULE_ORDER}
+    return defaults
+
+
+def save_prompt_modules(run_path: Path, modules: dict):
+    for path in [run_path / "recombination_prompt_modules.yaml", _GLOBAL_PROMPT_MODULES_PATH]:
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(modules, f, allow_unicode=True, default_flow_style=False)
+
+
+def assemble_prompt(modules: dict) -> str:
+    return "\n\n".join(modules[k] for k in _MODULE_ORDER)
+
+
+def render_prompt_module_editor(run_path: Path, key_prefix: str) -> dict:
+    saved = load_prompt_modules(run_path)
+    result = {}
+    for key in _MODULE_ORDER:
+        result[key] = st.text_area(
+            _MODULE_LABELS[key],
+            value=saved[key],
+            height=_MODULE_HEIGHTS[key],
+            key=f"{key_prefix}_{key}_{run_path.name}",
+        )
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -405,8 +651,8 @@ def render_stage3(run_path: Path):
         return
 
     st.markdown(
-        "Download the consolidated extraction file and the recombination prompt below. "
-        "Submit both to Claude. Then paste Claude's full output in Stage 4."
+        "下载整合提取文件，并将合并后的提示词一起提交给 Claude。"
+        "完成后将 Claude 的完整输出粘贴到 Stage 4。"
     )
 
     with open(consolidated_path, "rb") as f:
@@ -415,70 +661,24 @@ def render_stage3(run_path: Path):
             f,
             file_name="consolidated_extractions.md",
             mime="text/markdown",
-            use_container_width=True
+            use_container_width=True,
+            key="dl_consolidated_stage3"
         )
 
     st.divider()
-    st.markdown("#### Recombination Prompt")
-    st.caption("Copy this prompt and submit it to Claude together with the consolidated file.")
+    st.markdown("#### Recombination Prompt — 模块化编辑")
+    st.caption('按需修改各模块内容，点击"保存提示词配置"后在下方查看合并结果并复制。')
 
-    prompt = generate_recombination_prompt()
-    st.text_area(
-        "Recombination prompt",
-        value=prompt,
-        height=340,
-        key=f"recombination_prompt_{run_path.name}",
-        help="Click inside the field and use Ctrl+C / Cmd+C to copy the prompt."
-    )
-    st.info("Use Ctrl+C / Cmd+C after selecting the prompt above. This is more reliable than browser script-based copying.")
+    modules = render_prompt_module_editor(run_path, key_prefix="s3")
+
+    if st.button("保存提示词配置", use_container_width=True, key="save_prompt_s3"):
+        save_prompt_modules(run_path, modules)
+        st.success("提示词配置已保存。")
 
     st.divider()
-    st.markdown("#### Active Hard Filters")
-    st.caption("These filters are embedded in the prompt above.")
-    cfg = CONFIG["filters"]
-    st.markdown("**Required instruments** (at least one must be present):")
-    for item in cfg["required_instruments"]:
-        st.markdown(f"- {item}")
-    st.markdown("**Excluded instruments**:")
-    for item in cfg["excluded_instruments"]:
-        st.markdown(f"- {item}")
-    st.markdown("**Excluded populations**:")
-    for item in cfg["excluded_populations"]:
-        st.markdown(f"- {item}")
-
-
-def generate_recombination_prompt() -> str:
-    cfg = CONFIG["filters"]
-    labels = [module["label"] for module in CONFIG["extraction"]["modules"]]
-    required = "\n".join(f"   - {i}" for i in cfg["required_instruments"])
-    excluded_inst = "\n".join(f"   - {i}" for i in cfg["excluded_instruments"])
-    excluded_pop = "\n".join(f"   - {i}" for i in cfg["excluded_populations"])
-
-    return f"""You will receive structured extractions from multiple research papers. Each paper has been summarized across six modules: {", ".join(labels)}.
-
-Your task is to generate candidate research directions by combining modules from different papers. Each candidate direction must draw its components from at least two different source papers.
-
-Apply the following hard filters. Discard any candidate that fails any one of them:
-1. The Measurement Instruments component must include at least one of the following:
-{required}
-2. The Measurement Instruments component must not include any of the following:
-{excluded_inst}
-3. The participant requirements must not involve any of the following:
-{excluded_pop}
-
-For each candidate direction that passes all filters, output the following:
-
-**Candidate [N]**
-- Source papers: [list paper IDs]
-- {labels[0]}: [which paper, what content]
-- {labels[1]}: [which paper, what content]
-- {labels[2]} being addressed: [which paper, what content]
-- {labels[4]}: [which paper, what content]
-- {labels[5]}: [which paper, what content]
-- Research question: [one concise statement of the research question this combination implies]
-- Internal consistency check: [one sentence noting whether the combined components are logically compatible, and flagging any tension if present]
-
-Generate as many candidates as the combinations reasonably support. Do not filter by research type or thematic focus beyond the three hard criteria above."""
+    st.markdown("**合并后的完整提示词**")
+    st.caption("使用右上角复制按钮将提示词连同整合文件一起提交给 Claude。")
+    st.code(assemble_prompt(modules), language="text")
 
 
 # ─────────────────────────────────────────────
@@ -576,6 +776,19 @@ def render_stage4(run_path: Path):
                 mime="text/markdown",
                 use_container_width=True
             )
+
+        st.divider()
+        st.markdown("#### Step 4d — 精炼 Recombination Prompt")
+        st.caption(
+            "根据本轮评估结果，修改并保存下一轮的 Recombination Prompt。"
+            "保存后，Stage 3 的提示词将自动更新。"
+        )
+        modules_4d = render_prompt_module_editor(run_path, key_prefix="s4d")
+        if st.button("保存精炼后的提示词", type="primary", use_container_width=True, key="save_prompt_4d"):
+            save_prompt_modules(run_path, modules_4d)
+            st.success("提示词已保存，Stage 3 将在下次加载时使用更新后的配置。")
+        st.markdown("**合并预览**")
+        st.code(assemble_prompt(modules_4d), language="text")
 
 
 def load_evaluation_record(path: Path) -> dict:
