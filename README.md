@@ -4,12 +4,6 @@
 
 ---
 
-## 启动方式
-
-```bash
-streamlit run app.py
-```
-
 ## 项目简介
 
 传统做法通常是先凭直觉提出研究方向，再去文献中寻找支持依据。这种方式容易出现两个问题：
@@ -68,24 +62,28 @@ pip install pytest
 
 ## 配置
 
-复制配置模板并填写 DeepSeek API Key：
+**第一步：复制配置文件模板**
 
 ```bash
 cp config.yaml.example config.yaml
+cp .env.example .env
 ```
 
-然后编辑 `config.yaml`：
+**第二步：填写 API Key**
 
-```yaml
-deepseek:
-  api_key: "YOUR_DEEPSEEK_API_KEY"
+编辑 `.env` 文件，填入你的 DeepSeek API Key：
+
+```
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
 ```
 
-所有配置均集中在 `config.yaml`，包括：
+> `.env` 已加入 `.gitignore`，不会被提交到代码仓库。API Key 不再写入 `config.yaml`。
+
+**第三步：按需调整 `config.yaml` 中的其他参数**
 
 | 配置块 | 内容 |
 |--------|------|
-| `deepseek` | API Key、模型选择、max_tokens、temperature |
+| `deepseek` | 模型选择、max_tokens、temperature（API Key 在 .env 中） |
 | `extraction.modules` | 六个提取模块定义 |
 | `filters` | Stage 3 硬性筛选条件 |
 | `chunking` | 长文分块参数（见下） |
@@ -114,7 +112,7 @@ chunking:
 streamlit run app.py
 ```
 
-应用启动后会打开本地网页界面。如果 `config.yaml` 缺少必填字段，界面会显示红色错误提示。
+应用启动后会打开本地网页界面。如果 `.env` 中缺少 `DEEPSEEK_API_KEY` 或 `config.yaml` 缺少必填字段，界面会显示红色错误提示。
 
 ---
 
@@ -132,6 +130,7 @@ python -m pytest tests/ -v
 LitRecombine/
 ├── app.py                        # Streamlit 主入口
 ├── config.yaml.example           # 配置模板（复制为 config.yaml 后使用）
+├── .env.example                  # API Key 模板（复制为 .env 后填入密钥）
 ├── requirements.txt
 ├── README.md
 ├── README_en.md
@@ -193,6 +192,13 @@ LitRecombine/
 6. Experimental Measurement Methods
 
 每篇论文输出一个 Markdown 文件，保存在 `module_extractions/`。
+
+**模型选择**：UI 提供两个独立的模型下拉菜单：
+
+- **分块提取模型**：用于每个 chunk 的逐段提取，推荐 `deepseek-v4-flash`（速度快、成本低）
+- **合并模型**：仅在论文被切为多块时，用于最终的合并调用，可选 `deepseek-v4-pro` 获得更强推理
+
+单块论文只调用分块提取模型一次，合并模型不生效。
 
 **长文处理**：论文超过 token 预算时，会自动按四级边界切分（空行 → 句末换行 → 强制截断），对每个 chunk 单独提取，最后做一次合并。所有分块参数均可在 `config.yaml` 的 `chunking:` 块中调整。
 

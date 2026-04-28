@@ -62,24 +62,28 @@ pip install pytest
 
 ## Configuration
 
-Copy the config template and fill in your DeepSeek API key:
+**Step 1: Copy the config templates**
 
 ```bash
 cp config.yaml.example config.yaml
+cp .env.example .env
 ```
 
-Then edit `config.yaml`:
+**Step 2: Add your API key**
 
-```yaml
-deepseek:
-  api_key: "YOUR_DEEPSEEK_API_KEY"
+Edit `.env` and fill in your DeepSeek API key:
+
+```
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
 ```
 
-All settings are centralized in `config.yaml`:
+> `.env` is gitignored and will never be committed. The API key is no longer stored in `config.yaml`.
+
+**Step 3: Adjust other settings in `config.yaml` as needed**
 
 | Block | Contents |
 |-------|----------|
-| `deepseek` | API key, model, max_tokens, temperature |
+| `deepseek` | model, max_tokens, temperature (API key is in .env) |
 | `extraction.modules` | Six module definitions |
 | `filters` | Stage 3 hard filters |
 | `chunking` | Long-paper chunking parameters (see below) |
@@ -108,7 +112,7 @@ Model guidance:
 streamlit run app.py
 ```
 
-The app opens as a local web UI. If `config.yaml` is missing required fields, a red error banner is shown immediately.
+The app opens as a local web UI. If `DEEPSEEK_API_KEY` is missing from `.env` or `config.yaml` is missing required fields, a red error banner is shown immediately.
 
 ---
 
@@ -126,6 +130,7 @@ python -m pytest tests/ -v
 LitRecombine/
 ├── app.py                        # Streamlit entry point
 ├── config.yaml.example           # Config template (copy to config.yaml)
+├── .env.example                  # API key template (copy to .env and fill in)
 ├── requirements.txt
 ├── README.md
 ├── README_en.md
@@ -187,6 +192,13 @@ Extracts six modules from each paper:
 6. Experimental Measurement Methods
 
 Each paper produces one Markdown file in `module_extractions/`.
+
+**Model selection:** The UI provides two independent model dropdowns:
+
+- **Chunk extraction model**: used for per-chunk module extraction — `deepseek-v4-flash` recommended (fast and cost-efficient)
+- **Merge model**: used only for the final merge call when a paper is split into multiple chunks — switch to `deepseek-v4-pro` for stronger reasoning on complex papers
+
+For single-chunk papers, only the extraction model is called; the merge model has no effect.
 
 **Long-paper handling:** When a paper exceeds the token budget, the text is split using a four-level boundary hierarchy (blank lines → sentence-ending newlines → force-split), modules are extracted from each chunk independently, and the results are merged in a final consolidation call. All chunking parameters are configurable in `config.yaml`.
 
