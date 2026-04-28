@@ -87,7 +87,7 @@ Each full-text JSON is passed to the DeepSeek API with the extraction prompt bel
 
 If a paper is long, the application splits the full text into overlapping chunks, runs extraction on each chunk, and then performs a merge pass to produce one final per-paper extraction. This reduces the risk of missing modules that appear late in the paper.
 
-The UI allows the user to select the extraction model for the current run. The default configuration uses `deepseek-chat`, while `deepseek-reasoner` can be selected when stronger reasoning is desired.
+The UI allows the user to select the extraction model for the current run. The default configuration uses `deepseek-v4-flash`, while `deepseek-v4-pro` can be selected when stronger reasoning is desired.
 
 **Extraction prompt**:
 

@@ -17,8 +17,10 @@ env/
 htmlcov/
 
 # ── Config with secrets ──────────────────────────────────────
-# Copy config.yaml.example → config.yaml and fill in your API key
+# Copy config.yaml.example → config.yaml and fill in non-secret settings
 config.yaml
+# Copy .env.example → .env and fill in your API key
+.env
 
 # ── Project run output (user data) ──────────────────────────
 projects/

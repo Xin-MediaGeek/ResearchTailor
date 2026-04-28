@@ -103,8 +103,8 @@ chunking:
 
 模型建议：
 
-- `deepseek-chat`：默认，速度快、成本低，适合稳定结构化抽取
-- `deepseek-reasoner`：推理更强，适合边界模糊、需要深度理解的论文；可在 `chunking.max_tokens` 调至 `20000`
+- `deepseek-v4-flash`：默认，速度快、成本低，适合稳定结构化抽取
+- `deepseek-v4-pro`：推理更强，适合边界模糊、需要深度理解的论文；可在 `chunking.max_tokens` 调至 `20000`
 
 ---
 

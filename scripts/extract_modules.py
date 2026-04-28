@@ -2,11 +2,12 @@
 Stage 2b: Extract six modules from each paper via DeepSeek API.
 Usage:
   python extract_modules.py <run_path>
-  python extract_modules.py <run_path> --model deepseek-chat
-  python extract_modules.py <run_path> --model deepseek-reasoner
+  python extract_modules.py <run_path> --model deepseek-v4-flash
+  python extract_modules.py <run_path> --model deepseek-v4-pro
 """
 
 import json
+import os
 import re
 import sys
 import time
@@ -14,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 try:
     from openai import OpenAI
@@ -23,9 +25,12 @@ except ImportError:
 
 
 def load_config() -> dict:
+    load_dotenv(Path(__file__).parent.parent / ".env")
     config_path = Path(__file__).parent.parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
+    config.setdefault("deepseek", {})
+    config["deepseek"]["api_key"] = os.getenv("DEEPSEEK_API_KEY", "")
     config.setdefault("chunking", {
         "max_tokens": 12000,
         "overlap_tokens": 500,
@@ -37,7 +42,7 @@ def load_config() -> dict:
 
 def build_client(config: dict) -> OpenAI:
     return OpenAI(
-        api_key=config["deepseek"]["api_key"],
+        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
         base_url=config["deepseek"]["base_url"]
     )
 
@@ -240,8 +245,8 @@ def call_model(client: OpenAI, ds_config: dict, user_prompt: str) -> str:
         ]
     }
 
-    # deepseek-reasoner does not support temperature in the same way as deepseek-chat.
-    if ds_config["model"] != "deepseek-reasoner":
+    # deepseek-v4-pro (thinking mode) does not support temperature.
+    if ds_config["model"] != "deepseek-v4-pro":
         request_args["temperature"] = ds_config["temperature"]
 
     last_exc: Exception | None = None
@@ -308,6 +313,7 @@ def main():
 
     run_path = Path(sys.argv[1])
     model_override = None
+    merge_model_override = None
     extra_args = sys.argv[2:]
     i = 0
     while i < len(extra_args):
@@ -316,6 +322,12 @@ def main():
                 print("Missing value after --model")
                 sys.exit(1)
             model_override = extra_args[i + 1]
+            i += 2
+        elif extra_args[i] == "--merge-model":
+            if i + 1 >= len(extra_args):
+                print("Missing value after --merge-model")
+                sys.exit(1)
+            merge_model_override = extra_args[i + 1]
             i += 2
         else:
             print(f"Unknown argument: {extra_args[i]}")
@@ -331,6 +343,7 @@ def main():
     ds_config = config["deepseek"]
     if model_override:
         ds_config = {**ds_config, "model": model_override}
+    merge_ds_config = {**ds_config, "model": merge_model_override} if merge_model_override else ds_config
 
     json_files = sorted(fulltext_dir.glob("*_fulltext.json"))
     if not json_files:
@@ -407,7 +420,7 @@ def main():
                 response_text = chunk_outputs[0]
             else:
                 merge_prompt = build_merge_prompt(paper_id, chunk_outputs, modules)
-                response_text = call_model(client, ds_config, merge_prompt)
+                response_text = call_model(client, merge_ds_config, merge_prompt)
 
             extracted = parse_module_response(response_text, modules)
             markdown = render_extraction_markdown(paper_id, modules, extracted)

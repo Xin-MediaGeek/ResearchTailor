@@ -97,8 +97,8 @@ chunking:
 
 Model guidance:
 
-- `deepseek-chat`: default — fast, cost-efficient, reliable for structured extraction
-- `deepseek-reasoner`: stronger reasoning for papers with complex or ambiguous structure; consider raising `chunking.max_tokens` to `20000`
+- `deepseek-v4-flash`: default — fast, cost-efficient, reliable for structured extraction
+- `deepseek-v4-pro`: stronger reasoning for papers with complex or ambiguous structure; consider raising `chunking.max_tokens` to `20000`
 
 ---
 

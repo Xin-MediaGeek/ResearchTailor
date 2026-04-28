@@ -7,15 +7,19 @@ import time
 import json
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
 # ─────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────
 
 def load_config():
+    load_dotenv(Path(__file__).parent / ".env")
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
+    config.setdefault("deepseek", {})
+    config["deepseek"]["api_key"] = os.getenv("DEEPSEEK_API_KEY", "")
     config.setdefault("chunking", {
         "max_tokens": 12000,
         "overlap_tokens": 500,
@@ -29,8 +33,8 @@ def validate_config(config: dict) -> list[str]:
     """Return a list of human-readable error messages for missing required fields."""
     errors = []
     ds = config.get("deepseek", {})
-    if not ds.get("api_key", "").strip():
-        errors.append("`deepseek.api_key` is missing or empty in config.yaml")
+    if not os.getenv("DEEPSEEK_API_KEY", "").strip():
+        errors.append("`DEEPSEEK_API_KEY` is missing or empty in .env file")
     if not ds.get("base_url", "").strip():
         errors.append("`deepseek.base_url` is missing in config.yaml")
     if not ds.get("model", "").strip():
@@ -384,17 +388,32 @@ def render_stage2(run_path: Path):
         "Results are saved as per-paper Markdown files."
     )
 
-    available_models = ["deepseek-chat", "deepseek-reasoner"]
-    default_model = CONFIG["deepseek"]["model"]
-    selected_model = st.selectbox(
-        "Extraction model",
-        available_models,
-        index=available_models.index(default_model) if default_model in available_models else 0,
-        help="Use deepseek-chat for faster, lower-cost extraction. Use deepseek-reasoner when you want stronger reasoning for harder extraction boundaries."
-    )
+    available_models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+    legacy_map = {"deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-pro"}
+
+    default_model = CONFIG["deepseek"].get("model", "deepseek-v4-flash")
+    default_model = legacy_map.get(default_model, default_model)
+    if default_model not in available_models:
+        default_model = available_models[0]
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        selected_model = st.selectbox(
+            "分块提取模型",
+            available_models,
+            index=available_models.index(default_model),
+            help="每个分块的逐段提取使用此模型。推荐 deepseek-v4-flash：速度快、成本低。"
+        )
+    with col_m2:
+        selected_merge_model = st.selectbox(
+            "合并模型（长文多块合并）",
+            available_models,
+            index=available_models.index(default_model),
+            help="论文超长时，多块结果的最终合并使用此模型。如需更强推理可选 deepseek-v4-pro。短文只有一块时此选项无效。"
+        )
     st.caption(
         f"Configured default max_tokens: {CONFIG['deepseek']['max_tokens']}. "
-        "deepseek-chat is usually the best default for stable structured extraction."
+        "单块论文仅调用分块提取模型；多块论文额外调用合并模型一次。"
     )
 
     existing_md = [f for f in module_dir.glob("*_extraction.md")]
@@ -421,7 +440,11 @@ def render_stage2(run_path: Path):
 
         script_path = ROOT / "scripts" / "extract_modules.py"
         proc = subprocess.Popen(
-            ["python", str(script_path), str(run_path), "--model", selected_model],
+            [
+                "python", str(script_path), str(run_path),
+                "--model", selected_model,
+                "--merge-model", selected_merge_model,
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
